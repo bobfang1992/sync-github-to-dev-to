@@ -6,8 +6,17 @@ from github import Github
 import os
 import requests
 import json
+from markdown_it.tree import SyntaxTreeNode
 
 from markdown_it import MarkdownIt
+import frontmatter
+import re
+import time
+
+image_extract = "!\[(?P<alt>.*)\]\((?P<filename>.*)\)"
+
+image_extract_str = re.compile(image_extract)
+
 
 md = MarkdownIt().use(footnote_plugin).use(front_matter_plugin)
 
@@ -33,24 +42,47 @@ def sync(synced, to_sync):
     confirm = input("Sync? (y/n) ")
     if confirm == 'y':
         for file in to_sync:
-            print(f"Syncing {file.name}")
+            print(f"Syncing  {file.path}/{file.name}")
 
             headers = {'Content-type': 'application/json',
                        'api-key': os.getenv("DEVTO_API_KEY")}
 
-            content = md.parse(file.decoded_content.decode('utf-8'))
+            content = file.decoded_content.decode('utf-8')
+
+            def replacement(match):
+                if match.group('filename').startswith('./'):
+                    new_file_name = file.path.replace(
+                        "index.md", match.group('filename').replace('./', ''))
+                    raw_file = f"https://raw.githubusercontent.com/bobfang1992/personal-blog/master/{new_file_name}"
+                    return f"![{match.group('alt')}]({raw_file})"
+
+            content = image_extract_str.sub(replacement, content)
+
             print(content)
-            breakpoint()
+            frontmatter_data = frontmatter.loads(content)
+            title = frontmatter_data['title']
+            print("title:", title)
+            print("content:", frontmatter_data.content)
+
             body = {
+                "article": {
+                    "title": title,
+                    "body_markdown": frontmatter_data.content,
+                    "published": True,
+                    "tags": []
+                }
             }
 
-            print(headers, body)
-            # requests.post(
-            #     "https://dev.to/api/articles",
-            #     data=json.dumps(body),
-            #     headers=headers,
-            # )
-
+            resp = requests.post(
+                "https://dev.to/api/articles",
+                data=json.dumps(body),
+                headers=headers,
+            )
+            if resp.status_code != 201:
+                print(resp.status_code)
+                print(resp.text)
+                raise Exception("Error")
+            time.sleep(30)
         write_synced(synced)
         print("Synced")
     else:
